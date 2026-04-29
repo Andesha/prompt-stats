@@ -13,8 +13,11 @@ It shows:
 
 ## Install
 
+Clone the repo somewhere local, then install that local path:
+
 ```bash
-pi install /home/tk11br/Documents/prompt-stats
+git clone git@github.com:Andesha/prompt-stats.git
+pi install ./prompt-stats
 ```
 
 ## Usage
