@@ -1,8 +1,8 @@
 # prompt-stats
 
-MIT licensed.
+Know exactly what's inflating your Pi prompt before it eats your context window.
 
-A small Pi extension that adds `/prompt-stats`.
+A small Pi extension that adds `/prompt-stats` so you can measure the before/after impact of tools, skills, plugins, extensions, and prompt-template expansion.
 
 It shows:
 - the current effective system prompt
