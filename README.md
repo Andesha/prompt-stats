@@ -1,5 +1,7 @@
 # prompt-stats
 
+MIT licensed.
+
 A small Pi extension that adds `/prompt-stats`.
 
 It shows:

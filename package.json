@@ -1,7 +1,7 @@
 {
   "name": "prompt-stats",
   "version": "0.1.0",
-  "private": true,
+  "license": "MIT",
   "type": "module",
   "keywords": ["pi-package", "pi", "pi-coding-agent", "extension"],
   "pi": {
