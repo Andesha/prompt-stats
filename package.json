@@ -1,0 +1,10 @@
+{
+  "name": "prompt-stats",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "keywords": ["pi-package", "pi", "pi-coding-agent", "extension"],
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}
