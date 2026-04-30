@@ -1,12 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import promptStatsExtension from "../index.js";
-import { copyToClipboard } from "@mariozechner/pi-coding-agent";
+import { execSync } from "node:child_process";
 
-vi.mock("@mariozechner/pi-coding-agent", async (importOriginal) => {
-	const original = await importOriginal<typeof import("@mariozechner/pi-coding-agent")>();
+vi.mock("node:child_process", async (importOriginal) => {
+	const original = await importOriginal<typeof import("node:child_process")>();
 	return {
 		...original,
-		copyToClipboard: vi.fn().mockResolvedValue(undefined),
+		execSync: vi.fn(),
+		spawn: vi.fn(),
 	};
 });
 
@@ -16,6 +17,7 @@ describe("prompt-stats extension", () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		process.env.DISPLAY = ":0";
 		mockPi = {
 			registerCommand: vi.fn(),
 			getActiveTools: vi.fn().mockReturnValue(["tool1"]),
@@ -51,7 +53,7 @@ describe("prompt-stats extension", () => {
 
 		await handler("copy", mockCtx);
 
-		expect(copyToClipboard).toHaveBeenCalledWith(expect.stringContaining("# Prompt Stats"));
+		expect(execSync).toHaveBeenCalledWith("xclip -selection clipboard", expect.objectContaining({ input: expect.stringContaining("# Prompt Stats") }));
 		expect(mockCtx.ui.notify).toHaveBeenCalledWith("Report copied to clipboard", "info");
 	});
 });

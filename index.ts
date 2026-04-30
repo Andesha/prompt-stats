@@ -1,5 +1,7 @@
+import { execSync, spawn, type ExecSyncOptions } from "node:child_process";
+import { platform } from "node:os";
 import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
-import { DynamicBorder, copyToClipboard, getMarkdownTheme } from "@mariozechner/pi-coding-agent";
+import { DynamicBorder, getMarkdownTheme } from "@mariozechner/pi-coding-agent";
 import { Container, Markdown, matchesKey, Text } from "@mariozechner/pi-tui";
 
 type TextPart = { type: string; text?: string };
@@ -15,6 +17,56 @@ type MessageEntry = {
 const approxTokens = (text: string) => Math.ceil(text.length / 4);
 const countLines = (text: string) => (text.length === 0 ? 0 : text.split("\n").length);
 
+const copyToClipboardQuietly = async (text: string) => {
+	const options: ExecSyncOptions = { input: text, timeout: 5000, stdio: ["pipe", "ignore", "ignore"] };
+	const p = platform();
+
+	if (p === "darwin") {
+		execSync("pbcopy", options);
+		return;
+	}
+
+	if (p === "win32") {
+		execSync("clip", options);
+		return;
+	}
+
+	if (process.env.TERMUX_VERSION) {
+		try {
+			execSync("termux-clipboard-set", options);
+			return;
+		} catch {
+			// Fall back to Linux desktop tools.
+		}
+	}
+
+	if (process.env.WAYLAND_DISPLAY) {
+		try {
+			execSync("which wl-copy", { stdio: "ignore" });
+			const proc = spawn("wl-copy", [], { detached: true, stdio: ["pipe", "ignore", "ignore"] });
+			proc.stdin.on("error", () => undefined);
+			proc.stdin.write(text);
+			proc.stdin.end();
+			proc.unref();
+			return;
+		} catch {
+			// Fall back to X11 tools when available.
+		}
+	}
+
+	if (process.env.DISPLAY) {
+		try {
+			execSync("xclip -selection clipboard", options);
+			return;
+		} catch {
+			execSync("xsel --clipboard --input", options);
+			return;
+		}
+	}
+
+	throw new Error("Failed to copy to clipboard");
+};
+
 const statsLine = (label: string, text: string) =>
 	`- ${label}: ${text.length} chars, ${countLines(text)} lines, ~${approxTokens(text)} tokens`;
 
@@ -22,8 +74,7 @@ const extractText = (content: unknown): string => {
 	if (typeof content === "string") return content;
 	if (!Array.isArray(content)) return "";
 	return content
-		.filter((part): part is TextPart => Boolean(part) && typeof part === "object" && "type" in part)
-		.filter((part) => part.type === "text" && typeof part.text === "string")
+		.filter((part): part is TextPart => Boolean(part) && typeof part === "object" && "type" in part && part.type === "text" && typeof part.text === "string")
 		.map((part) => part.text)
 		.join("\n");
 };
@@ -121,7 +172,7 @@ export default function promptStatsExtension(pi: ExtensionAPI) {
 			if (mode === "copy") {
 				const report = buildReport(ctx, "full", pi);
 				try {
-					await copyToClipboard(report);
+					await copyToClipboardQuietly(report);
 					if (ctx.hasUI) ctx.ui.notify("Report copied to clipboard", "info");
 				} catch (e: any) {
 					if (ctx.hasUI) ctx.ui.notify(`Copy failed: ${e.message}`, "error");
