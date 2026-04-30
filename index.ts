@@ -37,10 +37,10 @@ type ToolSizeEntry = {
 	schemaMissing: boolean;
 };
 
-const approxTokens = (text: string) => Math.ceil(text.length / 4);
 const approxTokensFromChars = (chars: number) => Math.ceil(chars / 4);
+const approxTokens = (text: string) => approxTokensFromChars(text.length);
 const countLines = (text: string) => (text.length === 0 ? 0 : text.split("\n").length);
-const safeJsonLength = (value: unknown) => {
+const jsonLengthOrZero = (value: unknown) => {
 	try {
 		const serialized = JSON.stringify(value);
 		return serialized ? serialized.length : 0;
@@ -107,11 +107,21 @@ const copyToClipboardQuietly = async (text: string) => {
 const statsLine = (label: string, text: string) =>
 	`- ${label}: ${text.length} chars, ${countLines(text)} lines, ~${approxTokens(text)} tokens`;
 
+const missingToolSizeEntry = (name: string): ToolSizeEntry => ({
+	name,
+	descriptionLength: 0,
+	schemaLength: 0,
+	serializedLength: 0,
+	approxTokens: 0,
+	descriptionMissing: true,
+	schemaMissing: true,
+});
+
 const buildToolSizeEntry = (tool: ToolInfo): ToolSizeEntry => {
 	const description = typeof tool.description === "string" ? tool.description : "";
 	const schemaMissing = tool.parameters === undefined || tool.parameters === null;
-	const schemaLength = schemaMissing ? 0 : safeJsonLength(tool.parameters);
-	const serializedLength = safeJsonLength({
+	const schemaLength = schemaMissing ? 0 : jsonLengthOrZero(tool.parameters);
+	const serializedLength = jsonLengthOrZero({
 		name: tool.name,
 		description,
 		parameters: tool.parameters ?? null,
@@ -133,19 +143,7 @@ const buildToolSizeReport = (activeToolNames: string[], allTools: ToolInfo[]) =>
 	const activeToolEntries = activeToolNames
 		.map((toolName) => {
 			const tool = allToolsByName.get(toolName);
-			if (!tool) {
-				return {
-					name: toolName,
-					descriptionLength: 0,
-					schemaLength: 0,
-					serializedLength: 0,
-					approxTokens: 0,
-					descriptionMissing: true,
-					schemaMissing: true,
-				} satisfies ToolSizeEntry;
-			}
-
-			return buildToolSizeEntry(tool);
+			return tool ? buildToolSizeEntry(tool) : missingToolSizeEntry(toolName);
 		})
 		.sort(
 			(a, b) =>
@@ -319,8 +317,7 @@ const buildReport = (ctx: ExtensionCommandContext, mode: "summary" | "full", pi:
 	const commands = pi.getCommands().map((command) => command.name).sort();
 	const promptSectionSummary = promptSections.map((section) => statsLine(section.label, section.content));
 	const toolReport = buildToolSizeReport(activeTools, allTools);
-	const toolSummaryCount = Math.min(3, toolReport.activeToolEntries.length);
-	const largestTools = toolReport.activeToolEntries.slice(0, toolSummaryCount);
+	const largestTools = toolReport.activeToolEntries.slice(0, 3);
 
 	const lines = [
 		"# Prompt Stats",
