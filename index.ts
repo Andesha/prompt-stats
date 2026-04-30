@@ -14,8 +14,23 @@ type MessageEntry = {
 	};
 };
 
+type PromptSectionKey =
+	| "base"
+	| "projectContext"
+	| "skills"
+	| "extension"
+	| "unclassified";
+
+type PromptSection = {
+	key: PromptSectionKey;
+	label: string;
+	content: string;
+};
+
 const approxTokens = (text: string) => Math.ceil(text.length / 4);
 const countLines = (text: string) => (text.length === 0 ? 0 : text.split("\n").length);
+const SYSTEM_PROMPT_BASE_TAIL =
+	"- Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)";
 
 const copyToClipboardQuietly = async (text: string) => {
 	const options: ExecSyncOptions = { input: text, timeout: 5000, stdio: ["pipe", "ignore", "ignore"] };
@@ -91,19 +106,151 @@ const getLastUserMessage = (ctx: ExtensionCommandContext): string => {
 	return "";
 };
 
+const findFirstIndex = (text: string, patterns: RegExp[]) => {
+	let bestIndex = -1;
+	for (const pattern of patterns) {
+		pattern.lastIndex = 0;
+		const match = pattern.exec(text);
+		if (!match || match.index < 0) continue;
+		if (bestIndex === -1 || match.index < bestIndex) {
+			bestIndex = match.index;
+		}
+	}
+	return bestIndex;
+};
+
+const extractSkillsSection = (text: string) => {
+	const introPattern = /\n\nThe following skills provide specialized instructions for specific tasks\.[\s\S]*?<\/available_skills>/;
+	const xmlPattern = /\n*<available_skills>[\s\S]*?<\/available_skills>/;
+	const introMatch = introPattern.exec(text);
+	if (introMatch) {
+		return {
+			start: introMatch.index,
+			end: introMatch.index + introMatch[0].length,
+			content: introMatch[0],
+		};
+	}
+
+	const xmlMatch = xmlPattern.exec(text);
+	if (xmlMatch) {
+		return {
+			start: xmlMatch.index,
+			end: xmlMatch.index + xmlMatch[0].length,
+			content: xmlMatch[0],
+		};
+	}
+
+	return null;
+};
+
+const extractProjectContextSection = (text: string, sectionEnd: number) => {
+	const heading = "\n\n# Project Context\n\n";
+	const headingIndex = text.indexOf(heading);
+	if (headingIndex === -1 || headingIndex >= sectionEnd) {
+		return null;
+	}
+
+	return {
+		start: headingIndex,
+		end: sectionEnd,
+		content: text.slice(headingIndex, sectionEnd),
+	};
+};
+
+const buildPromptSections = (systemPrompt: string): PromptSection[] => {
+	const footerIndex = findFirstIndex(systemPrompt, [
+		/\nCurrent date:[\s\S]*\nCurrent working directory:[^\n]*$/,
+	]);
+	const promptBody = footerIndex >= 0 ? systemPrompt.slice(0, footerIndex) : systemPrompt;
+	const sections: PromptSection[] = [];
+
+	const skillsSection = extractSkillsSection(promptBody);
+	const projectContextSection = extractProjectContextSection(
+		promptBody,
+		skillsSection ? skillsSection.start : promptBody.length,
+	);
+	const preludeEnd = Math.min(
+		projectContextSection?.start ?? promptBody.length,
+		skillsSection?.start ?? promptBody.length,
+	);
+	const prelude = promptBody.slice(0, preludeEnd);
+
+	if (prelude.length > 0) {
+		const tailIndex = prelude.indexOf(SYSTEM_PROMPT_BASE_TAIL);
+		if (tailIndex >= 0) {
+			const baseEnd = tailIndex + SYSTEM_PROMPT_BASE_TAIL.length;
+			const baseContent = prelude.slice(0, baseEnd);
+			const extensionContent = prelude.slice(baseEnd);
+			sections.push({ key: "base", label: "Base prompt / core instructions", content: baseContent });
+			if (extensionContent.length > 0) {
+				sections.push({
+					key: "extension",
+					label: "Extension-added prompt text",
+					content: extensionContent,
+				});
+			}
+		} else {
+			sections.push({ key: "base", label: "Base prompt / core instructions", content: prelude });
+		}
+	}
+
+	if (projectContextSection) {
+		sections.push({
+			key: "projectContext",
+			label: "AGENTS.md / CONTEXT.md / project-context additions",
+			content: projectContextSection.content,
+		});
+	}
+
+	if (skillsSection) {
+		sections.push({
+			key: "skills",
+			label: "Available skills block",
+			content: skillsSection.content,
+		});
+	}
+
+	let consumed = preludeEnd;
+	if (projectContextSection) {
+		consumed = Math.max(consumed, projectContextSection.end);
+	}
+	if (skillsSection) {
+		consumed = Math.max(consumed, skillsSection.end);
+	}
+
+	const remainder = promptBody.slice(consumed);
+	if (remainder.length > 0) {
+		sections.push({
+			key: "unclassified",
+			label: "Unknown / unclassified remainder",
+			content: remainder,
+		});
+	} else {
+		sections.push({
+			key: "unclassified",
+			label: "Unknown / unclassified remainder",
+			content: "",
+		});
+	}
+
+	return sections;
+};
+
 const buildReport = (ctx: ExtensionCommandContext, mode: "summary" | "full", pi: ExtensionAPI) => {
 	const systemPrompt = ctx.getSystemPrompt();
-	const skillsBlock = (systemPrompt.match(/<available_skills>[\s\S]*?<\/available_skills>/) || [""])[0];
+	const promptSections = buildPromptSections(systemPrompt);
 	const lastUserMessage = getLastUserMessage(ctx);
 	const activeTools = pi.getActiveTools();
 	const commands = pi.getCommands().map((command) => command.name).sort();
+	const promptSectionSummary = promptSections.map((section) => statsLine(section.label, section.content));
 
 	const lines = [
 		"# Prompt Stats",
 		"",
 		"## Summary",
 		statsLine("System prompt", systemPrompt),
-		statsLine("Available skills block", skillsBlock),
+		"## System prompt breakdown",
+		...promptSectionSummary,
 		statsLine("Last user message", lastUserMessage),
 		`- Active tools: ${activeTools.length}`,
 		`- Slash commands: ${commands.length}`,
@@ -121,12 +268,11 @@ const buildReport = (ctx: ExtensionCommandContext, mode: "summary" | "full", pi:
 	];
 
 	if (mode === "full") {
+		for (const section of promptSections) {
+			lines.push("", `## ${section.label}`, "```text", section.content || "", "```");
+		}
+
 		lines.push(
-			"",
-			"## Full system prompt",
-			"```text",
-			systemPrompt || "",
-			"```",
 			"",
 			"## Last user message",
 			"```text",

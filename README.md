@@ -7,7 +7,7 @@ A small Pi extension that adds `/prompt-stats` so you can measure the before/aft
 It shows:
 - the current effective system prompt
 - chars / lines / approximate tokens
-- the `<available_skills>` block size
+- a breakdown for base prompt, project context, skills, extension text, and any unclassified remainder
 - the last user message size (useful for prompt-template expansion)
 - active tool names
 
@@ -31,6 +31,6 @@ Optional modes:
 
 ```text
 /prompt-stats summary   # summary only
-/prompt-stats full      # include full system prompt and last user message
+/prompt-stats full      # show each system prompt section under its own heading
 /prompt-stats copy      # copy full report via Pi's clipboard API
 ```

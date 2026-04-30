@@ -99,7 +99,8 @@ describe("prompt-stats extension", () => {
 		const done = vi.fn();
 		callback(null, theme, null, done);
 
-		expect((Markdown as any).mock).toHaveBeenCalledWith(expect.stringContaining("## Full system prompt"));
+		expect((Markdown as any).mock).toHaveBeenCalledWith(expect.stringContaining("## Base prompt / core instructions"));
+		expect((Markdown as any).mock).toHaveBeenCalledWith(expect.stringContaining("## Unknown / unclassified remainder"));
 	});
 
 	it("uses summary mode when 'summary' argument is provided", async () => {
@@ -124,5 +125,66 @@ describe("prompt-stats extension", () => {
 
 		expect(execSync).toHaveBeenCalledWith("xclip -selection clipboard", expect.objectContaining({ input: expect.stringContaining("# Prompt Stats") }));
 		expect(mockCtx.ui.notify).toHaveBeenCalledWith("Report copied to clipboard", "info");
+	});
+
+	it("breaks the system prompt into source sections in summary mode", async () => {
+		mockCtx.getSystemPrompt.mockReturnValue(
+			[
+				"Base prompt line 1",
+				"Base prompt line 2",
+				"- Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)",
+				"extension-added text",
+				"",
+				"# Project Context",
+				"",
+				"Project-specific instructions and guidelines:",
+				"",
+				"## /workspace/AGENTS.md",
+				"",
+				"agent instructions",
+				"",
+				"The following skills provide specialized instructions for specific tasks.",
+				"Use the read tool to load a skill's file when the task matches its description.",
+				"<available_skills>",
+				"  <skill>",
+				"    <name>test-skill</name>",
+				"    <description>Does a thing</description>",
+				"    <location>/workspace/.sandcastle/skills/test-skill/SKILL.md</location>",
+				"  </skill>",
+				"</available_skills>",
+				"",
+				"Current date: 2026-04-30",
+				"Current working directory: /workspace",
+			].join("\n"),
+		);
+
+		promptStatsExtension(mockPi);
+		const handler = mockPi.registerCommand.mock.calls[0][1].handler;
+
+		await handler("summary", mockCtx);
+
+		const callback = mockCtx.ui.custom.mock.calls[0][0];
+		const theme = { fg: (c: string, s: string) => s, bold: (s: string) => s };
+		const done = vi.fn();
+		callback(null, theme, null, done);
+
+		expect((Markdown as any).mock).toHaveBeenCalledWith(
+			expect.stringContaining("## System prompt breakdown"),
+		);
+		expect((Markdown as any).mock).toHaveBeenCalledWith(
+			expect.stringContaining("Base prompt / core instructions"),
+		);
+		expect((Markdown as any).mock).toHaveBeenCalledWith(
+			expect.stringContaining("AGENTS.md / CONTEXT.md / project-context additions"),
+		);
+		expect((Markdown as any).mock).toHaveBeenCalledWith(
+			expect.stringContaining("Available skills block"),
+		);
+		expect((Markdown as any).mock).toHaveBeenCalledWith(
+			expect.stringContaining("Extension-added prompt text"),
+		);
+		expect((Markdown as any).mock).toHaveBeenCalledWith(
+			expect.stringContaining("Unknown / unclassified remainder"),
+		);
 	});
 });
