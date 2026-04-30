@@ -31,6 +31,9 @@ const approxTokens = (text: string) => Math.ceil(text.length / 4);
 const countLines = (text: string) => (text.length === 0 ? 0 : text.split("\n").length);
 const SYSTEM_PROMPT_BASE_TAIL =
 	"- Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)";
+const SYSTEM_PROMPT_FOOTER_PATTERN =
+	/\nCurrent date:[\s\S]*\nCurrent working directory:[^\n]*$/;
+const PROJECT_CONTEXT_HEADING = "\n\n# Project Context\n\n";
 
 const copyToClipboardQuietly = async (text: string) => {
 	const options: ExecSyncOptions = { input: text, timeout: 5000, stdio: ["pipe", "ignore", "ignore"] };
@@ -144,8 +147,7 @@ const extractSkillsSection = (text: string) => {
 };
 
 const extractProjectContextSection = (text: string, sectionEnd: number) => {
-	const heading = "\n\n# Project Context\n\n";
-	const headingIndex = text.indexOf(heading);
+	const headingIndex = text.indexOf(PROJECT_CONTEXT_HEADING);
 	if (headingIndex === -1 || headingIndex >= sectionEnd) {
 		return null;
 	}
@@ -158,9 +160,7 @@ const extractProjectContextSection = (text: string, sectionEnd: number) => {
 };
 
 const buildPromptSections = (systemPrompt: string): PromptSection[] => {
-	const footerIndex = findFirstIndex(systemPrompt, [
-		/\nCurrent date:[\s\S]*\nCurrent working directory:[^\n]*$/,
-	]);
+	const footerIndex = findFirstIndex(systemPrompt, [SYSTEM_PROMPT_FOOTER_PATTERN]);
 	const promptBody = footerIndex >= 0 ? systemPrompt.slice(0, footerIndex) : systemPrompt;
 	const sections: PromptSection[] = [];
 
@@ -210,28 +210,16 @@ const buildPromptSections = (systemPrompt: string): PromptSection[] => {
 		});
 	}
 
-	let consumed = preludeEnd;
-	if (projectContextSection) {
-		consumed = Math.max(consumed, projectContextSection.end);
-	}
-	if (skillsSection) {
-		consumed = Math.max(consumed, skillsSection.end);
-	}
-
-	const remainder = promptBody.slice(consumed);
-	if (remainder.length > 0) {
-		sections.push({
-			key: "unclassified",
-			label: "Unknown / unclassified remainder",
-			content: remainder,
-		});
-	} else {
-		sections.push({
-			key: "unclassified",
-			label: "Unknown / unclassified remainder",
-			content: "",
-		});
-	}
+	const consumed = Math.max(
+		preludeEnd,
+		projectContextSection?.end ?? preludeEnd,
+		skillsSection?.end ?? preludeEnd,
+	);
+	sections.push({
+		key: "unclassified",
+		label: "Unknown / unclassified remainder",
+		content: promptBody.slice(consumed),
+	});
 
 	return sections;
 };
