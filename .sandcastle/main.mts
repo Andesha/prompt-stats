@@ -17,13 +17,39 @@
 // issues are picked up after each round of merges.
 //
 // Usage:
-//   npx tsx .sandcastle/main.ts
+//   npx tsx .sandcastle/main.mts
 // Or add to package.json:
-//   "scripts": { "sandcastle": "npx tsx .sandcastle/main.ts" }
+//   "scripts": { "sandcastle": "npx tsx .sandcastle/main.mts" }
 
-import { execFileSync } from "node:child_process";
 import * as sandcastle from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
+
+const readSandcastleEnv = () => {
+  try {
+    return Object.fromEntries(
+      readFileSync(join(process.cwd(), ".sandcastle", ".env"), "utf-8")
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line && !line.startsWith("#") && line.includes("="))
+        .map((line) => {
+          const index = line.indexOf("=");
+          return [line.slice(0, index), line.slice(index + 1)];
+        }),
+    );
+  } catch {
+    return {};
+  }
+};
+
+const DEFAULT_MODEL = readSandcastleEnv().SANDCASTLE_MODEL ?? "sharcnet/gemma-4-31B-it";
+const agent = (model = DEFAULT_MODEL) => pi(model);
+const sandbox = () =>
+  docker({
+    mounts: [
+      { hostPath: "~/.pi/agent", sandboxPath: "~/.pi/agent", readonly: true },
+    ],
+    network: "host",
+  });
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -32,26 +58,6 @@ import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 // Maximum number of plan→execute→merge cycles before stopping.
 // Raise this if your backlog is large; lower it for a quick smoke-test run.
 const MAX_ITERATIONS = 10;
-
-// Default model for all agent calls in this workflow. Set this in
-// .sandcastle/.env via SANDCASTLE_MODEL. Individual calls can override this by
-// passing a model to agent(), e.g. agent("claude-opus-4-1").
-const DEFAULT_MODEL = process.env.SANDCASTLE_MODEL;
-if (!DEFAULT_MODEL) {
-  throw new Error("SANDCASTLE_MODEL must be set in .sandcastle/.env");
-}
-const agent = (model = DEFAULT_MODEL) => sandcastle.pi(model);
-
-// The pi agent runs inside the sandbox container. Mount the host pi config so
-// custom providers/models are available there too, and use host networking so
-// container localhost can reach locally-forwarded model servers.
-const sandboxProvider = () =>
-  docker({
-    network: "host",
-    mounts: [
-      { hostPath: "~/.pi/agent", sandboxPath: "~/.pi/agent", readonly: true },
-    ],
-  });
 
 // Hooks run inside the sandbox before the agent starts each iteration.
 // npm install ensures the sandbox always has fresh dependencies.
@@ -63,17 +69,6 @@ const hooks = {
 // starts. Avoids a full npm install from scratch; the hook above handles
 // platform-specific binaries and any packages added since the last copy.
 const copyToWorktree = ["node_modules"];
-
-const branchHasCommitsToMerge = (branch: string) => {
-  try {
-    const count = execFileSync("git", ["rev-list", "--count", `HEAD..${branch}`], {
-      encoding: "utf8",
-    }).trim();
-    return Number(count) > 0;
-  } catch {
-    return false;
-  }
-};
 
 // ---------------------------------------------------------------------------
 // Main loop
@@ -93,12 +88,13 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
   // -------------------------------------------------------------------------
   const plan = await sandcastle.run({
     hooks,
-    sandbox: sandboxProvider(),
+    sandbox: sandbox(),
     name: "planner",
     // One iteration is enough: the planner just needs to read and reason,
     // not write code.
     maxIterations: 1,
-    agent: agent(),
+    // Opus for planning: dependency analysis benefits from deeper reasoning.
+    agent: sandcastle.agent(),
     promptFile: "./.sandcastle/plan-prompt.md",
   });
 
@@ -111,12 +107,9 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
   }
 
   // The plan JSON contains an array of issues, each with id, title, branch.
-  // Treat an empty object as no work too; smaller/local models sometimes emit
-  // `{}` instead of `{ "issues": [] }` when there are no matching issues.
-  const parsedPlan = JSON.parse(planMatch[1]!) as {
-    issues?: { id: string; title: string; branch: string }[];
+  const { issues } = JSON.parse(planMatch[1]!) as {
+    issues: { id: string; title: string; branch: string }[];
   };
-  const issues = parsedPlan.issues ?? [];
 
   if (issues.length === 0) {
     // No unblocked work — either everything is done or everything is blocked.
@@ -145,7 +138,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
     issues.map(async (issue) => {
       const sandbox = await sandcastle.createSandbox({
         branch: issue.branch,
-        sandbox: sandboxProvider(),
+        sandbox: sandbox(),
         hooks,
         copyToWorktree,
       });
@@ -155,7 +148,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
         const implement = await sandbox.run({
           name: "implementer",
           maxIterations: 100,
-          agent: agent(),
+          agent: sandcastle.agent(),
           promptFile: "./.sandcastle/implement-prompt.md",
           promptArgs: {
             TASK_ID: issue.id,
@@ -169,7 +162,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
           const review = await sandbox.run({
             name: "reviewer",
             maxIterations: 1,
-            agent: agent(),
+            agent: sandcastle.agent(),
             promptFile: "./.sandcastle/review-prompt.md",
             promptArgs: {
               BRANCH: issue.branch,
@@ -200,17 +193,14 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
     }
   }
 
-  // Pass branches with new commits to the merge phase. When rerunning after an
-  // interrupted/failed workflow, the implementer may find that commits already
-  // exist on the branch and produce no new commits in this run; still merge it
-  // if the branch is ahead of the current branch.
+  // Only pass branches that actually produced commits to the merge phase.
+  // An agent that ran successfully but made no commits has nothing to merge.
   const completedIssues = settled
     .map((outcome, i) => ({ outcome, issue: issues[i]! }))
     .filter(
       (entry) =>
         entry.outcome.status === "fulfilled" &&
-        (entry.outcome.value.commits.length > 0 ||
-          branchHasCommitsToMerge(entry.issue.branch)),
+        entry.outcome.value.commits.length > 0,
     )
     .map((entry) => entry.issue);
 
@@ -240,10 +230,10 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
   // -------------------------------------------------------------------------
   await sandcastle.run({
     hooks,
-    sandbox: sandboxProvider(),
+    sandbox: sandbox(),
     name: "merger",
     maxIterations: 1,
-    agent: agent(),
+    agent: sandcastle.agent(),
     promptFile: "./.sandcastle/merge-prompt.md",
     promptArgs: {
       // A markdown list of branch names, one per line.

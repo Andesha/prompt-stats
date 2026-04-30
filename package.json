@@ -4,7 +4,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "sandcastle": "npx tsx --env-file=.sandcastle/.env .sandcastle/main.ts",
+    "sandcastle": "npx tsx .sandcastle/main.mts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
