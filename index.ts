@@ -180,7 +180,7 @@ export default function promptStatsExtension(pi: ExtensionAPI) {
 				return;
 			}
 
-			const reportMode = mode === "summary" ? "summary" : (mode === "full" ? "full" : "summary");
+			const reportMode = (mode === "full") ? "full" : "summary";
 			const report = buildReport(ctx, reportMode, pi);
 			await showReport(report, ctx);
 			if (ctx.hasUI) {
