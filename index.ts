@@ -152,7 +152,8 @@ export default function promptStatsExtension(pi: ExtensionAPI) {
 			const report = buildReport(ctx, reportMode, pi);
 			await showReport(report, ctx);
 			if (ctx.hasUI) {
-				ctx.ui.notify(`System prompt: ${ctx.getSystemPrompt().length} chars, ~${approxTokens(ctx.getSystemPrompt())} tokens`, "info");
+				const sysPrompt = ctx.getSystemPrompt();
+				ctx.ui.notify(`System prompt: ${sysPrompt.length} chars, ~${approxTokens(sysPrompt)} tokens`, "info");
 			}
 		},
 	});
