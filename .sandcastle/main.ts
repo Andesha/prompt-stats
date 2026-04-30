@@ -111,9 +111,12 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
   }
 
   // The plan JSON contains an array of issues, each with id, title, branch.
-  const { issues } = JSON.parse(planMatch[1]!) as {
-    issues: { id: string; title: string; branch: string }[];
+  // Treat an empty object as no work too; smaller/local models sometimes emit
+  // `{}` instead of `{ "issues": [] }` when there are no matching issues.
+  const parsedPlan = JSON.parse(planMatch[1]!) as {
+    issues?: { id: string; title: string; branch: string }[];
   };
+  const issues = parsedPlan.issues ?? [];
 
   if (issues.length === 0) {
     // No unblocked work — either everything is done or everything is blocked.
