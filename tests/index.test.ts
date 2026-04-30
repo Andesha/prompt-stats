@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import promptStatsExtension from "../index.js";
 import { execSync } from "node:child_process";
-import { Container, Markdown } from "@mariozechner/pi-tui";
+import { Markdown } from "@mariozechner/pi-tui";
 
 vi.mock("node:child_process", async (importOriginal) => {
 	const original = await importOriginal<typeof import("node:child_process")>();
@@ -114,5 +114,15 @@ describe("prompt-stats extension", () => {
 		callback(null, theme, null, done);
 
 		expect((Markdown as any).mock).toHaveBeenCalledWith(expect.not.stringContaining("## Full system prompt"));
+	});
+
+	it("handles 'copy' mode", async () => {
+		promptStatsExtension(mockPi);
+		const handler = mockPi.registerCommand.mock.calls[0][1].handler;
+
+		await handler("copy", mockCtx);
+
+		expect(execSync).toHaveBeenCalledWith("xclip -selection clipboard", expect.objectContaining({ input: expect.stringContaining("# Prompt Stats") }));
+		expect(mockCtx.ui.notify).toHaveBeenCalledWith("Report copied to clipboard", "info");
 	});
 });
