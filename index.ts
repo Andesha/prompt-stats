@@ -1,6 +1,6 @@
 import { execSync, spawn, type ExecSyncOptions } from "node:child_process";
 import { platform } from "node:os";
-import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, ToolInfo } from "@mariozechner/pi-coding-agent";
 import { DynamicBorder, getMarkdownTheme } from "@mariozechner/pi-coding-agent";
 import { Container, Markdown, matchesKey, Text } from "@mariozechner/pi-tui";
 
@@ -27,8 +27,27 @@ type PromptSection = {
 	content: string;
 };
 
+type ToolSizeEntry = {
+	name: string;
+	descriptionLength: number;
+	schemaLength: number;
+	serializedLength: number;
+	approxTokens: number;
+	descriptionMissing: boolean;
+	schemaMissing: boolean;
+};
+
 const approxTokens = (text: string) => Math.ceil(text.length / 4);
+const approxTokensFromChars = (chars: number) => Math.ceil(chars / 4);
 const countLines = (text: string) => (text.length === 0 ? 0 : text.split("\n").length);
+const safeJsonLength = (value: unknown) => {
+	try {
+		const serialized = JSON.stringify(value);
+		return serialized ? serialized.length : 0;
+	} catch {
+		return 0;
+	}
+};
 const SYSTEM_PROMPT_BASE_TAIL =
 	"- Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)";
 const SYSTEM_PROMPT_FOOTER_PATTERN =
@@ -87,6 +106,73 @@ const copyToClipboardQuietly = async (text: string) => {
 
 const statsLine = (label: string, text: string) =>
 	`- ${label}: ${text.length} chars, ${countLines(text)} lines, ~${approxTokens(text)} tokens`;
+
+const buildToolSizeEntry = (tool: ToolInfo): ToolSizeEntry => {
+	const description = typeof tool.description === "string" ? tool.description : "";
+	const schemaMissing = tool.parameters === undefined || tool.parameters === null;
+	const schemaLength = schemaMissing ? 0 : safeJsonLength(tool.parameters);
+	const serializedLength = safeJsonLength({
+		name: tool.name,
+		description,
+		parameters: tool.parameters ?? null,
+	});
+
+	return {
+		name: tool.name,
+		descriptionLength: description.length,
+		schemaLength,
+		serializedLength,
+		approxTokens: approxTokensFromChars(serializedLength),
+		descriptionMissing: description.length === 0,
+		schemaMissing,
+	};
+};
+
+const buildToolSizeReport = (activeToolNames: string[], allTools: ToolInfo[]) => {
+	const allToolsByName = new Map(allTools.map((tool) => [tool.name, tool]));
+	const activeToolEntries = activeToolNames
+		.map((toolName) => {
+			const tool = allToolsByName.get(toolName);
+			if (!tool) {
+				return {
+					name: toolName,
+					descriptionLength: 0,
+					schemaLength: 0,
+					serializedLength: 0,
+					approxTokens: 0,
+					descriptionMissing: true,
+					schemaMissing: true,
+				} satisfies ToolSizeEntry;
+			}
+
+			return buildToolSizeEntry(tool);
+		})
+		.sort(
+			(a, b) =>
+				b.serializedLength - a.serializedLength ||
+				b.schemaLength - a.schemaLength ||
+				b.descriptionLength - a.descriptionLength ||
+				a.name.localeCompare(b.name),
+		);
+
+	const totalSerializedLength = activeToolEntries.reduce((sum, tool) => sum + tool.serializedLength, 0);
+
+	return {
+		activeToolEntries,
+		activeToolCount: activeToolEntries.length,
+		totalSerializedLength,
+		totalApproxTokens: approxTokensFromChars(totalSerializedLength),
+	};
+};
+
+const formatToolSizeLine = (tool: ToolSizeEntry) => {
+	const descriptionText = tool.descriptionMissing
+		? "description unavailable"
+		: `description ${tool.descriptionLength} chars`;
+	const schemaText = tool.schemaMissing ? "schema unavailable" : `schema ${tool.schemaLength} chars`;
+
+	return `- ${tool.name}: ${descriptionText}, ${schemaText}, serialized ${tool.serializedLength} chars, ~${tool.approxTokens} tokens`;
+};
 
 const extractText = (content: unknown): string => {
 	if (typeof content === "string") return content;
@@ -229,8 +315,12 @@ const buildReport = (ctx: ExtensionCommandContext, mode: "summary" | "full", pi:
 	const promptSections = buildPromptSections(systemPrompt);
 	const lastUserMessage = getLastUserMessage(ctx);
 	const activeTools = pi.getActiveTools();
+	const allTools = pi.getAllTools();
 	const commands = pi.getCommands().map((command) => command.name).sort();
 	const promptSectionSummary = promptSections.map((section) => statsLine(section.label, section.content));
+	const toolReport = buildToolSizeReport(activeTools, allTools);
+	const toolSummaryCount = Math.min(3, toolReport.activeToolEntries.length);
+	const largestTools = toolReport.activeToolEntries.slice(0, toolSummaryCount);
 
 	const lines = [
 		"# Prompt Stats",
@@ -240,16 +330,20 @@ const buildReport = (ctx: ExtensionCommandContext, mode: "summary" | "full", pi:
 		"## System prompt breakdown",
 		...promptSectionSummary,
 		statsLine("Last user message", lastUserMessage),
-		`- Active tools: ${activeTools.length}`,
+		"## Tool breakdown",
+		`- Active tools: ${toolReport.activeToolCount}`,
+		`- Total active tool schema size: ${toolReport.totalSerializedLength} chars, ~${toolReport.totalApproxTokens} tokens`,
+		"## Largest tools",
+		toolReport.activeToolEntries.length > 0
+			? largestTools.map((tool) => formatToolSizeLine(tool)).join("\n")
+			: "- none",
 		`- Slash commands: ${commands.length}`,
 		"",
 		"## Notes",
 		"- Skills contribute to the system prompt via `<available_skills>`.",
 		"- Prompt templates usually affect the user message, not the system prompt.",
 		"- Token counts are approximate: `ceil(chars / 4)`.",
-		"",
-		"## Active tools",
-		activeTools.length > 0 ? activeTools.map((tool) => `- ${tool}`).join("\n") : "- none",
+		"- Tool sizes use `JSON.stringify()` length for parameter schema and full serialized tool payloads.",
 		"",
 		"## Slash commands",
 		commands.length > 0 ? commands.map((command) => `- /${command}`).join("\n") : "- none",
@@ -259,6 +353,11 @@ const buildReport = (ctx: ExtensionCommandContext, mode: "summary" | "full", pi:
 		for (const section of promptSections) {
 			lines.push("", `## ${section.label}`, "```text", section.content || "", "```");
 		}
+
+		lines.push("", "## Tool breakdown", `- Active tools: ${toolReport.activeToolCount}`);
+		lines.push(`- Total active tool schema size: ${toolReport.totalSerializedLength} chars, ~${toolReport.totalApproxTokens} tokens`);
+		lines.push("## Active tools");
+		lines.push(toolReport.activeToolEntries.length > 0 ? toolReport.activeToolEntries.map((tool) => formatToolSizeLine(tool)).join("\n") : "- none");
 
 		lines.push(
 			"",

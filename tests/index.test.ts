@@ -48,6 +48,16 @@ describe("prompt-stats extension", () => {
 		mockPi = {
 			registerCommand: vi.fn(),
 			getActiveTools: vi.fn().mockReturnValue(["tool1"]),
+			getAllTools: vi.fn().mockReturnValue([
+				{
+					name: "tool1",
+					description: "default tool description",
+					parameters: {
+						type: "object",
+						properties: {},
+					},
+				},
+			]),
 			getCommands: vi.fn().mockReturnValue([{ name: "cmd1" }]),
 		};
 		mockCtx = {
@@ -186,5 +196,77 @@ describe("prompt-stats extension", () => {
 		expect((Markdown as any).mock).toHaveBeenCalledWith(
 			expect.stringContaining("Unknown / unclassified remainder"),
 		);
+	});
+
+	it("includes a stable tool size breakdown in summary and full modes", async () => {
+		mockPi.getActiveTools.mockReturnValue(["beta", "alpha", "gamma"]);
+		mockPi.getAllTools.mockReturnValue([
+			{
+				name: "alpha",
+				description: "short description",
+				parameters: {
+					type: "object",
+					properties: {
+						a: { type: "string" },
+					},
+				},
+			},
+			{
+				name: "beta",
+				description: "a much longer description for the larger tool",
+				parameters: {
+					type: "object",
+					properties: {
+						b: { type: "string" },
+						c: { type: "number" },
+						d: { type: "boolean" },
+					},
+				},
+			},
+			{
+				name: "gamma",
+				description: "",
+				parameters: {},
+			},
+		]);
+
+		promptStatsExtension(mockPi);
+		const handler = mockPi.registerCommand.mock.calls[0][1].handler;
+
+		await handler("summary", mockCtx);
+
+		const summaryCallback = mockCtx.ui.custom.mock.calls[0][0];
+		const theme = { fg: (c: string, s: string) => s, bold: (s: string) => s };
+		const done = vi.fn();
+		summaryCallback(null, theme, null, done);
+
+		const summaryReport = (Markdown as any).mock.mock.calls[
+			(Markdown as any).mock.mock.calls.length - 1
+		][0] as string;
+
+		expect(summaryReport).toContain("## Tool breakdown");
+		expect(summaryReport).toContain("- Active tools: 3");
+		expect(summaryReport).toContain("- Total active tool schema size:");
+		expect(summaryReport).toContain("## Largest tools");
+		expect(summaryReport.indexOf("- beta:")).toBeLessThan(summaryReport.indexOf("- alpha:"));
+
+		(Markdown as any).mock.mockClear();
+		mockCtx.ui.custom.mockClear();
+
+		await handler("full", mockCtx);
+
+		const fullCallback = mockCtx.ui.custom.mock.calls[0][0];
+		fullCallback(null, theme, null, done);
+
+		const fullReport = (Markdown as any).mock.mock.calls[
+			(Markdown as any).mock.mock.calls.length - 1
+		][0] as string;
+
+		expect(fullReport).toContain("## Active tools");
+		expect(fullReport).toContain("beta:");
+		expect(fullReport).toContain("description");
+		expect(fullReport).toContain("schema");
+		expect(fullReport).toContain("serialized");
+		expect(fullReport).toContain("gamma:");
 	});
 });

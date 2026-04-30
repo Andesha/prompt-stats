@@ -10,6 +10,7 @@ It shows:
 - a breakdown for base prompt, project context, skills, extension text, and any unclassified remainder
 - the last user message size (useful for prompt-template expansion)
 - active tool names
+- active tool schema breakdown, including per-tool description length, input schema length, and total serialized size
 
 ## Install
 
