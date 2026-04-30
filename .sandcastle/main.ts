@@ -17,10 +17,13 @@
 // issues are picked up after each round of merges.
 //
 // Usage:
-//   npx tsx .sandcastle/main.mts
+//   npx tsx .sandcastle/main.ts
 // Or add to package.json:
-//   "scripts": { "sandcastle": "npx tsx .sandcastle/main.mts" }
+//   "scripts": { "sandcastle": "npx tsx .sandcastle/main.ts" }
 
+import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import * as sandcastle from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 
@@ -42,8 +45,8 @@ const readSandcastleEnv = () => {
 };
 
 const DEFAULT_MODEL = readSandcastleEnv().SANDCASTLE_MODEL ?? "sharcnet/gemma-4-31B-it";
-const agent = (model = DEFAULT_MODEL) => pi(model);
-const sandbox = () =>
+const agent = (model = DEFAULT_MODEL) => sandcastle.pi(model);
+const sandboxProvider = () =>
   docker({
     mounts: [
       { hostPath: "~/.pi/agent", sandboxPath: "~/.pi/agent", readonly: true },
@@ -88,13 +91,13 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
   // -------------------------------------------------------------------------
   const plan = await sandcastle.run({
     hooks,
-    sandbox: sandbox(),
+    sandbox: sandboxProvider(),
     name: "planner",
     // One iteration is enough: the planner just needs to read and reason,
     // not write code.
     maxIterations: 1,
     // Opus for planning: dependency analysis benefits from deeper reasoning.
-    agent: sandcastle.agent(),
+    agent: agent(),
     promptFile: "./.sandcastle/plan-prompt.md",
   });
 
@@ -107,9 +110,10 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
   }
 
   // The plan JSON contains an array of issues, each with id, title, branch.
-  const { issues } = JSON.parse(planMatch[1]!) as {
-    issues: { id: string; title: string; branch: string }[];
+  const parsedPlan = JSON.parse(planMatch[1]!) as {
+    issues?: { id: string; title: string; branch: string }[];
   };
+  const issues = Array.isArray(parsedPlan.issues) ? parsedPlan.issues : [];
 
   if (issues.length === 0) {
     // No unblocked work — either everything is done or everything is blocked.
@@ -138,7 +142,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
     issues.map(async (issue) => {
       const sandbox = await sandcastle.createSandbox({
         branch: issue.branch,
-        sandbox: sandbox(),
+        sandbox: sandboxProvider(),
         hooks,
         copyToWorktree,
       });
@@ -148,7 +152,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
         const implement = await sandbox.run({
           name: "implementer",
           maxIterations: 100,
-          agent: sandcastle.agent(),
+          agent: agent(),
           promptFile: "./.sandcastle/implement-prompt.md",
           promptArgs: {
             TASK_ID: issue.id,
@@ -162,7 +166,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
           const review = await sandbox.run({
             name: "reviewer",
             maxIterations: 1,
-            agent: sandcastle.agent(),
+            agent: agent(),
             promptFile: "./.sandcastle/review-prompt.md",
             promptArgs: {
               BRANCH: issue.branch,
@@ -193,14 +197,29 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
     }
   }
 
-  // Only pass branches that actually produced commits to the merge phase.
-  // An agent that ran successfully but made no commits has nothing to merge.
+  // Pass branches that produced commits in this run, plus branches that are
+  // already ahead of the current target branch from a previous/partial run.
+  const targetBranch = execSync("git branch --show-current", { encoding: "utf-8" }).trim();
+  const branchIsAhead = (branch: string) => {
+    try {
+      execSync(`git rev-parse --verify ${branch}`, { stdio: "ignore" });
+      const count = Number(
+        execSync(`git rev-list --count ${targetBranch}..${branch}`, {
+          encoding: "utf-8",
+        }).trim(),
+      );
+      return count > 0;
+    } catch {
+      return false;
+    }
+  };
+
   const completedIssues = settled
     .map((outcome, i) => ({ outcome, issue: issues[i]! }))
     .filter(
       (entry) =>
         entry.outcome.status === "fulfilled" &&
-        entry.outcome.value.commits.length > 0,
+        (entry.outcome.value.commits.length > 0 || branchIsAhead(entry.issue.branch)),
     )
     .map((entry) => entry.issue);
 
@@ -230,10 +249,10 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
   // -------------------------------------------------------------------------
   await sandcastle.run({
     hooks,
-    sandbox: sandbox(),
+    sandbox: sandboxProvider(),
     name: "merger",
     maxIterations: 1,
-    agent: sandcastle.agent(),
+    agent: agent(),
     promptFile: "./.sandcastle/merge-prompt.md",
     promptArgs: {
       // A markdown list of branch names, one per line.
@@ -241,6 +260,10 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
       // A markdown list of issue IDs and titles, one per line.
       ISSUES: completedIssues
         .map((i) => `- ${i.id}: ${i.title}`)
+        .join("\n"),
+      // Concrete close commands, with task IDs already substituted.
+      CLOSE_TASK_COMMANDS: completedIssues
+        .map((i) => `- ` + `gh issue close {{TASK_ID}} --comment "Completed by Sandcastle"`.replaceAll("{{TASK_ID}}", i.id))
         .join("\n"),
     },
   });

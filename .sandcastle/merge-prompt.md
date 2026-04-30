@@ -15,12 +15,16 @@ After all branches are merged, make a single commit summarizing the merge.
 
 # CLOSE ISSUES
 
-For each branch that was merged, close its issue using the following command:
-
-`gh issue close {{TASK_ID}} --comment "Completed by Sandcastle"`
+For each branch that was merged, close its issue using the matching command below.
 
 Here are all the issues:
 
 {{ISSUES}}
+
+Command format: `gh issue close <task-id> --comment "Completed by Sandcastle"`
+
+Close commands:
+
+{{CLOSE_TASK_COMMANDS}}
 
 Once you've merged everything you can, output <promise>COMPLETE</promise>.
