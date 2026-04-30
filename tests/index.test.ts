@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import promptStatsExtension from "../index.js";
 import { execSync } from "node:child_process";
+import { Container, Markdown } from "@mariozechner/pi-tui";
 
 vi.mock("node:child_process", async (importOriginal) => {
 	const original = await importOriginal<typeof import("node:child_process")>();
@@ -8,6 +9,32 @@ vi.mock("node:child_process", async (importOriginal) => {
 		...original,
 		execSync: vi.fn(),
 		spawn: vi.fn(),
+	};
+});
+
+vi.mock("@mariozechner/pi-tui", async (importOriginal) => {
+	const original = await importOriginal<typeof import("@mariozechner/pi-tui")>();
+	
+	class MockContainer {
+		addChild = vi.fn();
+		render = vi.fn();
+		invalidate = vi.fn();
+	}
+	class MockMarkdown {
+		static mock = vi.fn();
+		constructor(public text: string) {
+			MockMarkdown.mock(text);
+		}
+	}
+	class MockText {
+		constructor(public text: string) {}
+	}
+
+	return {
+		...original,
+		Container: MockContainer,
+		Markdown: MockMarkdown,
+		Text: MockText,
 	};
 });
 
@@ -47,13 +74,45 @@ describe("prompt-stats extension", () => {
 		expect(mockPi.registerCommand).toHaveBeenCalledWith("prompt-stats", expect.any(Object));
 	});
 
-	it("handles 'copy' mode", async () => {
+	it("defaults to summary mode when no arguments are provided", async () => {
 		promptStatsExtension(mockPi);
 		const handler = mockPi.registerCommand.mock.calls[0][1].handler;
 
-		await handler("copy", mockCtx);
+		await handler("", mockCtx);
 
-		expect(execSync).toHaveBeenCalledWith("xclip -selection clipboard", expect.objectContaining({ input: expect.stringContaining("# Prompt Stats") }));
-		expect(mockCtx.ui.notify).toHaveBeenCalledWith("Report copied to clipboard", "info");
+		const callback = mockCtx.ui.custom.mock.calls[0][0];
+		const theme = { fg: (c: string, s: string) => s, bold: (s: string) => s };
+		const done = vi.fn();
+		callback(null, theme, null, done);
+
+		expect((Markdown as any).mock).toHaveBeenCalledWith(expect.not.stringContaining("## Full system prompt"));
+	});
+
+	it("uses full mode when 'full' argument is provided", async () => {
+		promptStatsExtension(mockPi);
+		const handler = mockPi.registerCommand.mock.calls[0][1].handler;
+
+		await handler("full", mockCtx);
+
+		const callback = mockCtx.ui.custom.mock.calls[0][0];
+		const theme = { fg: (c: string, s: string) => s, bold: (s: string) => s };
+		const done = vi.fn();
+		callback(null, theme, null, done);
+
+		expect((Markdown as any).mock).toHaveBeenCalledWith(expect.stringContaining("## Full system prompt"));
+	});
+
+	it("uses summary mode when 'summary' argument is provided", async () => {
+		promptStatsExtension(mockPi);
+		const handler = mockPi.registerCommand.mock.calls[0][1].handler;
+
+		await handler("summary", mockCtx);
+
+		const callback = mockCtx.ui.custom.mock.calls[0][0];
+		const theme = { fg: (c: string, s: string) => s, bold: (s: string) => s };
+		const done = vi.fn();
+		callback(null, theme, null, done);
+
+		expect((Markdown as any).mock).toHaveBeenCalledWith(expect.not.stringContaining("## Full system prompt"));
 	});
 });

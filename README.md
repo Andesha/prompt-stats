@@ -25,8 +25,15 @@ pi install ./prompt-stats
 ```text
 /prompt-stats
 ```
+Defaults to summary mode.
 
 Optional modes:
+
+```text
+/prompt-stats summary   # summary only
+/prompt-stats full      # include full system prompt and last user message
+/prompt-stats copy      # copy full report via Pi's clipboard API
+```
 
 ```text
 /prompt-stats summary   # summary only
