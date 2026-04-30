@@ -1,7 +1,6 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
-import { DynamicBorder, getMarkdownTheme } from "@mariozechner/pi-coding-agent";
+import { DynamicBorder, copyToClipboard, getMarkdownTheme } from "@mariozechner/pi-coding-agent";
 import { Container, Markdown, matchesKey, Text } from "@mariozechner/pi-tui";
-import * as fs from "node:fs/promises";
 
 type TextPart = { type: string; text?: string };
 
@@ -122,28 +121,10 @@ export default function promptStatsExtension(pi: ExtensionAPI) {
 			if (mode === "copy") {
 				const report = buildReport(ctx, "full", pi);
 				try {
-					// @ts-expect-error - clipboard might not be on ExtensionAPI yet
-					if (pi.clipboard?.writeText) {
-						// @ts-expect-error - clipboard might not be on ExtensionAPI yet
-						await pi.clipboard.writeText(report);
-						if (ctx.hasUI) ctx.ui.notify("Report copied to clipboard", "info");
-					} else {
-						throw new Error("Clipboard not available");
-					}
+					await copyToClipboard(report);
+					if (ctx.hasUI) ctx.ui.notify("Report copied to clipboard", "info");
 				} catch (e: any) {
 					if (ctx.hasUI) ctx.ui.notify(`Copy failed: ${e.message}`, "error");
-				}
-				return;
-			}
-
-			if (mode === "save") {
-				const report = buildReport(ctx, "full", pi);
-				const path = argParts[1] || "prompt-stats.md";
-				try {
-					await fs.writeFile(path, report);
-					if (ctx.hasUI) ctx.ui.notify(`Report saved to ${path}`, "info");
-				} catch (e: any) {
-					if (ctx.hasUI) ctx.ui.notify(`Save failed: ${e.message}`, "error");
 				}
 				return;
 			}

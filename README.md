@@ -31,6 +31,5 @@ Optional modes:
 ```text
 /prompt-stats summary   # summary only
 /prompt-stats full      # include full system prompt and last user message
-/prompt-stats copy      # copy full report to clipboard
-/prompt-stats save [path] # save full report to file (defaults to prompt-stats.md)
+/prompt-stats copy      # copy full report via Pi's clipboard API
 ```
