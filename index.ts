@@ -1,8 +1,10 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
 import { DynamicBorder, getMarkdownTheme } from "@mariozechner/pi-coding-agent";
 import { Container, Markdown, matchesKey, Text } from "@mariozechner/pi-tui";
+import * as fs from "node:fs/promises";
 
 type TextPart = { type: string; text?: string };
+
 type MessageEntry = {
 	type: string;
 	message?: {
@@ -114,8 +116,40 @@ export default function promptStatsExtension(pi: ExtensionAPI) {
 	pi.registerCommand("prompt-stats", {
 		description: "Show the current system prompt and prompt-size stats",
 		handler: async (args, ctx) => {
-			const mode = args.trim().toLowerCase() === "summary" ? "summary" : "full";
-			const report = buildReport(ctx, mode, pi);
+			const argParts = args.trim().split(/\s+/);
+			const mode = argParts[0]?.toLowerCase();
+
+			if (mode === "copy") {
+				const report = buildReport(ctx, "full", pi);
+				try {
+					// @ts-expect-error - clipboard might not be on ExtensionAPI yet
+					if (pi.clipboard?.writeText) {
+						// @ts-expect-error - clipboard might not be on ExtensionAPI yet
+						await pi.clipboard.writeText(report);
+						if (ctx.hasUI) ctx.ui.notify("Report copied to clipboard", "info");
+					} else {
+						throw new Error("Clipboard not available");
+					}
+				} catch (e: any) {
+					if (ctx.hasUI) ctx.ui.notify(`Copy failed: ${e.message}`, "error");
+				}
+				return;
+			}
+
+			if (mode === "save") {
+				const report = buildReport(ctx, "full", pi);
+				const path = argParts[1] || "prompt-stats.md";
+				try {
+					await fs.writeFile(path, report);
+					if (ctx.hasUI) ctx.ui.notify(`Report saved to ${path}`, "info");
+				} catch (e: any) {
+					if (ctx.hasUI) ctx.ui.notify(`Save failed: ${e.message}`, "error");
+				}
+				return;
+			}
+
+			const reportMode = mode === "summary" ? "summary" : "full";
+			const report = buildReport(ctx, reportMode, pi);
 			await showReport(report, ctx);
 			if (ctx.hasUI) {
 				ctx.ui.notify(`System prompt: ${ctx.getSystemPrompt().length} chars, ~${approxTokens(ctx.getSystemPrompt())} tokens`, "info");
