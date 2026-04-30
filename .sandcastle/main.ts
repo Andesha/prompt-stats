@@ -21,6 +21,7 @@
 // Or add to package.json:
 //   "scripts": { "sandcastle": "npx tsx .sandcastle/main.ts" }
 
+import { execFileSync } from "node:child_process";
 import * as sandcastle from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 
@@ -62,6 +63,17 @@ const hooks = {
 // starts. Avoids a full npm install from scratch; the hook above handles
 // platform-specific binaries and any packages added since the last copy.
 const copyToWorktree = ["node_modules"];
+
+const branchHasCommitsToMerge = (branch: string) => {
+  try {
+    const count = execFileSync("git", ["rev-list", "--count", `HEAD..${branch}`], {
+      encoding: "utf8",
+    }).trim();
+    return Number(count) > 0;
+  } catch {
+    return false;
+  }
+};
 
 // ---------------------------------------------------------------------------
 // Main loop
@@ -185,14 +197,17 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
     }
   }
 
-  // Only pass branches that actually produced commits to the merge phase.
-  // An agent that ran successfully but made no commits has nothing to merge.
+  // Pass branches with new commits to the merge phase. When rerunning after an
+  // interrupted/failed workflow, the implementer may find that commits already
+  // exist on the branch and produce no new commits in this run; still merge it
+  // if the branch is ahead of the current branch.
   const completedIssues = settled
     .map((outcome, i) => ({ outcome, issue: issues[i]! }))
     .filter(
       (entry) =>
         entry.outcome.status === "fulfilled" &&
-        entry.outcome.value.commits.length > 0,
+        (entry.outcome.value.commits.length > 0 ||
+          branchHasCommitsToMerge(entry.issue.branch)),
     )
     .map((entry) => entry.issue);
 
