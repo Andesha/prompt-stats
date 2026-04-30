@@ -157,7 +157,6 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
             agent: agent(),
             promptFile: "./.sandcastle/review-prompt.md",
             promptArgs: {
-              SOURCE_BRANCH: "main",
               BRANCH: issue.branch,
             },
           });
