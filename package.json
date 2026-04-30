@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "license": "MIT",
   "type": "module",
+  "scripts": {
+    "sandcastle": "npx tsx --env-file=.sandcastle/.env .sandcastle/main.ts"
+  },
   "keywords": ["pi-package", "pi", "pi-coding-agent", "extension"],
   "pi": {
     "extensions": ["./index.ts"]
