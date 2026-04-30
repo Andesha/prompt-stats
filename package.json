@@ -6,8 +6,19 @@
   "scripts": {
     "sandcastle": "npx tsx --env-file=.sandcastle/.env .sandcastle/main.ts"
   },
-  "keywords": ["pi-package", "pi", "pi-coding-agent", "extension"],
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "extension"
+  ],
   "pi": {
-    "extensions": ["./index.ts"]
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "devDependencies": {
+    "@ai-hero/sandcastle": "^0.5.6",
+    "tsx": "^4.21.0"
   }
 }
