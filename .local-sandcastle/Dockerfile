@@ -20,8 +20,8 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 # --user 1000:1000 (Docker) map to the correct home directory owner.
 RUN usermod -d /home/agent -m -l agent node
 
-# Install Codex CLI (run as root before USER agent)
-RUN npm install -g @openai/codex
+# Install pi coding agent (run as root before USER agent)
+RUN npm install -g @mariozechner/pi-coding-agent
 
 USER agent
 
